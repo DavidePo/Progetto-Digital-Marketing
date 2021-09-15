@@ -1,0 +1,1973 @@
+---
+title: "Elaborato Digital Marketing"
+author: "Davide Porcellini 816586"
+date: "28/01/2021"
+output: html_document
+---
+
+# Setting 
+```{r, include = FALSE, warning=FALSE}
+#importazione librerie e scelta del seme
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE,
+                      fig.align = "center",
+                      out.width = "55%",
+                      dev = "svg",
+                      dpi = 36)
+
+
+library(tidyverse)
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(forcats)
+library(lubridate)
+library(RQuantLib)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(MLmetrics)
+library(viridis)
+library(randomForest)
+library(glmnet)
+library(LiblineaR)
+library(funModeling)
+
+
+set.seed(12345)
+
+directory <- "C:\\Users\\porce\\Desktop\\Digital Marketing\\Progetto"
+
+
+```
+
+# Caricamento File
+
+Si importano i sette datset
+
+## Importo primo dataset
+
+```{r, results = 'asis', warning= FALSE}
+#importazione del primo dataset e statistiche descrittive
+raw1 <- read_csv2(file.path(directory, "raw_1_cli_fid.csv"),
+                          na = c("NA", ""))
+
+knitr::kable(head(raw1))
+summary(raw1)
+```
+
+## Importo secondo dataset
+
+```{r }
+#importazione del secondo dataset e statistiche descrittive
+raw2 <- read_csv2(file.path(directory, "raw_2_cli_account.csv"), 
+                              na = c("NA", ""))    
+
+knitr::kable(head(raw2))  
+summary(raw2)               
+```
+
+## Importo terzo dataset
+
+```{r }
+#importazione del terzo dataset e statistiche descrittive
+raw3 <- read_csv2(file.path(directory, "raw_3_cli_address.csv"), 
+                              na = c(""))  
+
+knitr::kable(head(raw3))    
+summary(raw3)               
+```
+
+## Importo quarto dataset
+
+```{r }
+#importazione del quarto dataset e statistiche descrittive
+raw4 <- read_csv2(file.path(directory, "raw_4_cli_privacy.csv"), 
+                              na = c("NA", ""))                    
+
+knitr::kable(head(raw4))    
+summary(raw4)               
+```
+
+## Importo quinto dataset
+
+```{r }
+#importazione del quinto dataset e statistiche descrittive
+raw5 <- read_csv2(file.path(directory, "raw_5_camp_cat.csv"),
+                           na = c("NA", "")) 
+
+knitr::kable(head(raw5))    
+summary(raw5)               
+```
+
+## Importo sesto dataset
+
+```{r }
+#importazione del sesto dataset e statistiche descrittive
+raw6 <- read_csv2(file.path(directory, "raw_6_camp_event.csv"), 
+                             na = c("NA", ""))  
+
+knitr::kable(head(raw6))    
+summary(raw6)               
+```
+
+## Importo settimo dataset
+
+```{r }
+#importazione del settimo dataset e statistiche descrittive
+raw7 <- read_csv2(file.path(directory, "raw_7_tic.csv"), 
+                      na = c("NA", ""))  
+                      
+knitr::kable(head(raw7))    
+summary(raw7)               
+```
+
+# Preparazione dei dati per l'analisi
+
+Si puliscono i dataset e si correggono gli eventuali errori o imprecisioni per favorire un'analisi più accurata ed aderente alla realtà
+
+```{r }
+#Creo copie dei datset per avere un backup degli originali
+data1 <- raw1         
+data2 <- raw2         
+data3  <- raw3          
+data4  <- raw4           
+data5 <- raw5     
+data6 <- raw6        
+data7  <- raw7          
+```
+
+## Primo dataset
+
+### Pulizia
+
+
+```{r }
+#ricerca di duplicati
+
+data1_dup <- data1 %>%
+                              summarise(TOT_ID_CLIs = n_distinct(ID_CLI),
+                              TOT_ID_FIDs = n_distinct(ID_FID),           
+                              TOT_ID_CLIFIDs = n_distinct(paste0(as.character(ID_CLI), "-",
+                                                                 as.character(ID_FID))),
+                              TOT_ROWs = n())                             
+
+knitr::kable(data1_dup)
+```
+
+
+```{r }
+#formattazzione della data e fattorizzazione degli attributi che lo richiedono
+data1 <- data1                                 %>% 
+                    mutate(DT_ACTIVE = as.Date(DT_ACTIVE))       %>% 
+                    mutate(TYP_CLI_FID = as.factor(TYP_CLI_FID)) %>% 
+                    mutate(STATUS_FID = as.factor(STATUS_FID))       
+```
+
+
+
+```{r, warning=FALSE}
+#conteggio numero abbonamenti per cliente
+
+fid_sub_cli <- data1     %>%
+                   group_by(ID_CLI) %>%                         
+                   summarise(NUM_FIDs  = n_distinct(ID_FID),    
+                             NUM_DATEs = n_distinct(DT_ACTIVE)) 
+```
+
+
+
+```{r }
+#conteggio percentuale numero carte fedeltà per cliente
+
+tot_id_cli <- n_distinct(fid_sub_cli$ID_CLI) 
+
+dist_fid_sub_cli <- fid_sub_cli %>%
+                        group_by(NUM_FIDs, NUM_DATEs)            %>% 
+                        summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+                        mutate(PERCENT_CLIs = TOT_CLIs/tot_id_cli)   
+
+knitr::kable(dist_fid_sub_cli)
+```
+
+
+```{r }
+#clienti con 3 abbonamenti con esempi di ricerca su singoli clienti
+fid_sub_cli %>%
+  filter(NUM_FIDs == 3)
+
+data1 %>%
+  filter(ID_CLI == 96537)
+
+data1 %>%
+  filter(ID_CLI == 250133)
+```
+
+
+```{r,}
+#combinazione informazioni per ogni cliente dal primo abbonamento all'ultimo
+
+client_data1_first <- data1                       %>%
+                           group_by(ID_CLI)                    %>% 
+                           filter(DT_ACTIVE == min(DT_ACTIVE)) %>% 
+                           arrange(ID_FID)                     %>% 
+                           filter(row_number() == 1)           %>% 
+                           ungroup()                           %>% 
+                           as.data.frame()
+
+client_data1_last <- data1                       %>%
+                          group_by(ID_CLI)                    %>% 
+                          filter(DT_ACTIVE == max(DT_ACTIVE)) %>% 
+                          arrange(desc(ID_FID))               %>% 
+                          filter(row_number() == 1)           %>% 
+                          ungroup()                           %>%
+                          as.data.frame()
+```
+
+```{r }
+# combinazione tramite left join tra `client_data1_first` e `fid_sub_cli` in `client_data1_last`
+data1_complete <- client_data1_last                      %>%
+                      select(ID_CLI,
+                             ID_FID,
+                             LAST_COD_FID = COD_FID,
+                             LAST_TYP_CLI_FID = TYP_CLI_FID,
+                             LAST_STATUS_FID = STATUS_FID,
+                             LAST_DT_ACTIVE = DT_ACTIVE)    %>% 
+                      left_join(client_data1_first       %>% 
+                                  select(ID_CLI,
+                                         FIRST_ID_NEG = ID_NEG,
+                                         FIRST_DT_ACTIVE = DT_ACTIVE),
+                                by = "ID_CLI")              %>%
+                      left_join(fid_sub_cli         %>%       
+                                  select(ID_CLI,
+                                         NUM_FIDs)          %>%
+                                  mutate(NUM_FIDs = as.factor(NUM_FIDs)),
+                                by = "ID_CLI")
+
+
+```
+
+### Analisi esplorative
+
+
+```{r }
+#analisi distribuzione programma fedeltà tramite grafico
+data1_fid <- data1_complete          %>%
+  group_by(LAST_COD_FID)                   %>% 
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>% 
+  arrange(desc(PERCENT))                       
+knitr::kable(data1_fid)
+
+ggplot(data = data1_fid,
+       aes(x = LAST_COD_FID, y = TOT_CLIs)) + 
+  geom_bar(stat = "identity",                  
+           fill = "steelblue") +               
+  theme_minimal()                              
+```
+
+
+
+```{r }
+#analisi distribuzione variabile `LAST_STATUS_FID` mediante grafico
+data1_laststatus <- data1_complete         %>% 
+  group_by(LAST_STATUS_FID)                %>%    
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>%   
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>%   
+  arrange(desc(PERCENT))                         
+knitr::kable(data1_laststatus)
+
+ggplot(data = data1_laststatus, 
+       aes(x = LAST_STATUS_FID, y = TOT_CLIs)) + 
+  geom_bar(stat = "identity",                 
+           fill = "steelblue") +                 
+  theme_minimal()                                
+```
+
+```{r }
+#analisi variabile `NUM_FIDs` mediante grafico
+data1_numfid <- data1_complete            %>%
+  group_by(NUM_FIDs)                       %>% 
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>% 
+  arrange(desc(PERCENT))    
+knitr::kable(data1_numfid)
+
+
+ggplot(data = data1_numfid,               
+       aes(x = NUM_FIDs, y = TOT_CLIs)) +      
+  geom_bar(stat = "identity",
+           fill = "steelblue") +               
+  theme_minimal()                              
+```
+
+
+```{r }
+#analisi variabile `LAST_TYP_CLI_FID` mediante grafico
+data1_type <- data1_complete          %>%
+  group_by(LAST_TYP_CLI_FID)               %>%    
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>%    
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>%    
+  arrange(desc(PERCENT))                          
+knitr::kable(data1_type)
+
+
+ggplot(data = data1_type,
+       aes(x = LAST_TYP_CLI_FID, y = TOT_CLIs)) + 
+  geom_bar(stat = "identity",
+           fill = "steelblue") +                  
+  theme_minimal()                                 
+```
+
+```{r }
+#analisi variabile `FIRST_DT_ACTIVE` mediante grafico
+data1_date <- data1_complete           %>%
+  group_by(FIRST_DT_ACTIVE)                %>%   
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>%   
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>%   
+  arrange(desc(PERCENT))
+knitr::kable(head(data1_date))
+
+ggplot(data = data1_date,
+       aes(x = FIRST_DT_ACTIVE, y = TOT_CLIs)) + 
+  geom_line() +                                  
+  theme_minimal()                                
+```
+
+## Secondo dataset
+
+### Pulizia
+
+
+```{r}
+#controllo duplicati che risultano non esserci
+data2_dup <- data2 %>%
+                            summarise(TOT_ID_CLIs = n_distinct(ID_CLI),
+                                      TOT_ROWs = n())
+                          
+knitr::kable(data2_dup) 
+```
+
+```{r }
+#fattorizzazione delle variabili che lo richiedono e gestione dei valori mancanti
+data2_complete <- data2 %>%
+                  mutate(W_PHONE = as.factor(W_PHONE))                  %>% 
+                  mutate(TYP_CLI_ACCOUNT = as.factor(TYP_CLI_ACCOUNT))  %>%  
+                  mutate(W_PHONE = fct_explicit_na(W_PHONE, "0"))       %>% 
+                  mutate(EMAIL_PROVIDER = fct_explicit_na(EMAIL_PROVIDER,
+                                                          "(missing)")) %>% 
+                  mutate(TYP_JOB = fct_explicit_na(TYP_JOB, "(missing)"))   
+```
+
+### Reshaping
+
+```{r }
+#analisi distribuzione variabile `EMAIL_PROVIDER`
+
+data2_emailprovider <- data2_complete                             %>%
+                            group_by(EMAIL_PROVIDER)                 %>% 
+                            summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+                            mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>% 
+                            arrange(desc(PERCENT))                   %>% 
+                            as.data.frame()
+
+knitr::kable(head(data2_emailprovider))
+```
+
+
+```{r }
+#fattorizzazione della variabile `EMAIL_PROVIDER` considerati i molti livelli in cui la frequenza è molto vicina allo zero. Si decide di accorpare qualsiasi livello che presenti una frequenza percentuale inferiore a 0.85 nel livello denominato `others`
+
+knitr::kable(data2_emailprovider                      %>%
+  arrange(desc(PERCENT))                                   %>% 
+  mutate(PERCENT_COVERED = cumsum(TOT_CLIs)/sum(TOT_CLIs)) %>% 
+  as.data.frame()                                          %>%
+  head(10))
+
+emailprovider <- data2_emailprovider %>%
+                          arrange(desc(PERCENT)) %>%                                       
+                          mutate(PERCENT_COVERED = cumsum(TOT_CLIs)/sum(TOT_CLIs)) %>%      
+                          mutate(EMAIL_PROVIDER = as.character(EMAIL_PROVIDER))    %>%
+                          mutate(AUX = if_else(PERCENT_COVERED < 0.85 |
+                                                 (PERCENT_COVERED > 0.85 &
+                                                    lag(PERCENT_COVERED) < 0.85), 1,0)) %>%
+                          mutate(EMAIL_PROVIDER_CLEAN = if_else(AUX | EMAIL_PROVIDER == "(missing)",
+                                                                EMAIL_PROVIDER,
+                                                                "others"))                  
+
+knitr::kable(head(emailprovider, 7))
+
+
+data2_complete <- data2_complete                         %>%
+  mutate(EMAIL_PROVIDER = as.character(EMAIL_PROVIDER)) %>% 
+  left_join(emailprovider                       %>%
+              select(EMAIL_PROVIDER, EMAIL_PROVIDER_CLEAN),
+            by = "EMAIL_PROVIDER")                      %>% 
+  select(-EMAIL_PROVIDER)                               %>%
+  mutate(EMAIL_PROVIDER_CLEAN = as.factor(EMAIL_PROVIDER_CLEAN)) 
+
+```
+
+### Analisi esplorative
+
+
+```{r }
+#analisi distribuzionen variabile `W_PHONE` mediante grafico
+data2_phone <- data2_complete %>%
+  group_by(W_PHONE)                        %>% 
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>% 
+  arrange(desc(PERCENT))                   %>% 
+  as.data.frame()
+
+knitr::kable(data2_phone)
+
+ggplot(data = data2_phone,
+       aes(x = W_PHONE,
+           y = TOT_CLIs)) +                   
+  geom_bar(stat = "identity",
+           fill = "steelblue") +               
+  theme_minimal()                              
+```
+
+
+```{r }
+#analisi distribuzione variabile `TYP_CLI_ACCOUNT`
+data2_account <- data2_complete         %>%
+  group_by(TYP_CLI_ACCOUNT)                %>% 
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>% 
+  arrange(desc(PERCENT))                   %>% 
+  as.data.frame()
+
+knitr::kable(data2_account)
+```
+
+```{r }
+#analisi distribuzione variabile `EMAIL_PROVIDER_CLEAN` tramite grafico
+data2_emailproviderclean <- data2_complete %>%
+  group_by(EMAIL_PROVIDER_CLEAN)             %>% 
+  summarise(TOT_CLIs = n_distinct(ID_CLI))   %>% 
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs))   %>% 
+  arrange(desc(PERCENT))                         
+
+ggplot(data = data2_emailproviderclean,
+       aes(x = EMAIL_PROVIDER_CLEAN,
+           y = TOT_CLIs)) +                      
+  geom_bar(stat = "identity",
+           fill = "steelblue") +                 
+  theme_minimal()                                
+```
+
+
+```{r }
+#analisi distribuzione variabile `TYP_JOB` mediante grafico
+data2_job<- data2_complete             %>%
+  group_by(TYP_JOB)                        %>% 
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>% 
+  arrange(desc(PERCENT))                   %>% 
+  as.data.frame()
+
+knitr::kable(data2_job)
+
+ggplot(data = data2_job,
+       aes(x = TYP_JOB,
+           y = TOT_CLIs)) +                    
+  geom_bar(stat = "identity", 
+           fill = "steelblue") +               
+  theme_minimal()                              
+```
+
+```{r }
+#analisi distribuzione variabile `TYP_CLI_ACCOUNT`
+data2_account <- data2_complete         %>%
+  group_by(TYP_CLI_ACCOUNT)                %>% 
+  summarise(TOT_CLIs = n_distinct(ID_CLI)) %>% 
+  mutate(PERCENT = TOT_CLIs/sum(TOT_CLIs)) %>% 
+  arrange(desc(PERCENT))                   %>% 
+  as.data.frame()
+
+knitr::kable(data2_account)
+
+```
+
+## Terzo dataset
+
+### Pulizia
+
+```{r }
+#controllo sui duplicati e rimozione di quelli trovati
+knitr::kable(data3 %>%
+               summarise(TOT_ID_ADDRESSes = n_distinct(ID_ADDRESS), 
+               TOT_ROWs = n()))                                     
+
+
+data3_complete <- data3 %>%
+                  distinct()
+```
+
+
+```{r }
+#fattorizzazione della variabile `CAP` e rimozione delle righe che presentano un valore mancante su almeno uno dei seguenti attributi: (`CAP`), (`PRV`) e (`REGION`)
+
+data3_complete <- data3_complete %>%
+                    mutate(CAP = as.character(CAP))                   %>% 
+                    filter(!is.na(CAP) & !is.na(PRV) & !is.na(REGION))
+```
+
+### Analisi esplorative
+
+```{r }
+#analisi della variabile `CAP` in cui sono presenti 4784 differenti valori
+nrow(data3_complete %>%
+  distinct(CAP))       
+
+```
+
+```{r }
+#data l'elevata numerosità di valori unici nella variabile `CAP` si decide di analizzare la variabile `PRV` che presenta 110 differenti valori
+
+nrow(data3_complete %>%
+  distinct(PRV))
+```
+
+```{r }
+#si ritiene troppo elevata anche la numerosità di valori unici della variabile `PRV`, si decide di concentrarsi sulla variabile `REGION` che presente 20 valori differenti. Si analizza la distribuzione della variabile `REGION` mediante grafico
+
+nrow(data3_complete %>%
+  distinct(REGION))
+
+data3_region<- data3_complete                  %>%
+  group_by(REGION)                                %>%  
+  summarise(TOT_ADDRESS = n_distinct(ID_ADDRESS)) %>%  
+  mutate(PERCENT = TOT_ADDRESS/sum(TOT_ADDRESS))  %>%  
+  arrange(desc(PERCENT))                               
+
+knitr::kable(head(data3_region))
+
+ggplot(data = data3_region, aes(x = REGION,
+                                   y = TOT_ADDRESS)) + 
+  geom_bar(stat = "identity",
+           fill = "steelblue") +                       
+  theme_minimal()                                      
+```
+
+## Quarto dataset
+
+### Pulizia
+
+```{r }
+#controllo sui duplicati che risultano non essere presenti
+
+knitr::kable(data4 %>%
+               summarise(TOT_ID_CLIs = n_distinct(ID_CLI), 
+               TOT_ROWs = n()))                            
+
+```
+
+
+```{r }
+#fattorizzazione per le variabili che lo richiedono
+data4_complete <- data4                      %>%
+  mutate(FLAG_PRIVACY_1 = as.factor(FLAG_PRIVACY_1)) %>% 
+  mutate(FLAG_PRIVACY_2 = as.factor(FLAG_PRIVACY_2)) %>% 
+  mutate(FLAG_DIRECT_MKT = as.factor(FLAG_DIRECT_MKT))   
+```
+
+### Analisi esplorative
+
+```{r }
+#analisi distribuzione variabile `FLAG_PRIVACY_1` mediante grafico
+data4_privacy1<- data4_complete                            %>%
+                      group_by(FLAG_PRIVACY_1)               %>% 
+                      summarise(TOT_ID = n_distinct(ID_CLI)) %>% 
+                      mutate(PERCENT = TOT_ID/sum(TOT_ID))   %>% 
+                      arrange(desc(PERCENT))                     
+
+knitr::kable(data4_privacy1)
+
+ggplot(data = data4_privacy1,
+       aes(x = FLAG_PRIVACY_1,
+           y = TOT_ID)) +       
+  geom_bar(stat = "identity",
+           fill = "steelblue") + 
+  theme_minimal()                
+```
+
+
+```{r }
+#analisi distribuzione varibile `FLAG_PRIVACY_2` mediante grafico
+
+data4_privacy2 <- data4_complete                            %>%
+                      group_by(FLAG_PRIVACY_2)                %>% 
+                      summarise(TOT_ID = n_distinct(ID_CLI))  %>% 
+                      mutate(PERCENT = TOT_ID/sum(TOT_ID))    %>% 
+                      arrange(desc(PERCENT))                       
+
+knitr::kable(data4_privacy2)
+
+ggplot(data = data4_privacy2,
+       aes(x = FLAG_PRIVACY_2,
+           y = TOT_ID)) +        
+  geom_bar(stat = "identity",
+           fill = "steelblue") + 
+  theme_minimal()                
+```
+
+
+```{r }
+#analisi distribuzione varibile `FLAG_DIRECT_MKT` mediante grafico
+data4_privacy_mkt <- data4_complete                             %>%
+                          group_by(FLAG_DIRECT_MKT)               %>% 
+                          summarise(TOT_ID = n_distinct(ID_CLI))  %>% 
+                          mutate(PERCENT = TOT_ID/sum(TOT_ID))    %>% 
+                          arrange(desc(PERCENT))                        
+
+knitr::kable(data4_privacy_mkt)
+
+ggplot(data = data4_privacy_mkt,
+       aes(x = FLAG_DIRECT_MKT,
+           y = TOT_ID)) +        
+  geom_bar(stat = "identity",
+           fill = "steelblue") + 
+  theme_minimal()                
+```
+
+## Quinto dataset
+
+```{r }
+#rimozione variabile `CHANNEL_CAMP` in quanto ritenuta non discriminante per l'analisi
+data5_complete <- data5 %>%
+                             select(-CHANNEL_CAMP)
+```
+
+## Sesto dataset
+
+### Pulizia
+
+```{r }
+#formattazione delle date
+data6_complete <- data6                                                    %>%
+                              mutate(EVENT_DATETIME = as.POSIXct(EVENT_DATE,
+                                                                 format = "%Y-%m-%dT%H:%M:%S")) %>% 
+                              mutate(EVENT_HOUR = hour(EVENT_DATETIME))                         %>% 
+                              mutate(EVENT_DATE = as.Date(EVENT_DATETIME))                    
+```
+
+### Reshaping
+
+```{r }
+#fattorizzazione della variabile `TYP_EVENT` unendo i livelli `E` e `B` insieme al livello `F`
+data6_complete<- data6_complete %>%
+                          mutate(TYP_EVENT = as.factor(if_else(TYP_EVENT == "E" | TYP_EVENT == "B",
+                                                               "F", as.character(TYP_EVENT)))) %>%
+                          left_join(data5_complete,
+                                    by = "ID_CAMP")                                                 
+
+```
+
+```{r }
+#aggiunta a ciascun evento di invio le aperture, i click o i fallimenti corrispondenti
+d6_sends <- data6_complete            %>%
+              filter(TYP_EVENT == "S")       %>% 
+              select(-TYP_EVENT)             %>%
+              select(ID_EVENT_S = ID_EVENT,
+                     ID_CLI,
+                     ID_CAMP,
+                     TYP_CAMP,
+                     ID_DELIVERY,
+                     SEND_DATE = EVENT_DATE) %>% 
+              as.data.frame()
+```
+
+
+```{r}
+#si contano gli eventi aperti cercando di non contare la stessa apertura due volte, per questo si conta solo la prima
+d6_opens_parz <- data6_complete             %>%
+                    filter(TYP_EVENT == "V")       %>% 
+                    select(-TYP_EVENT)             %>%
+                    select(ID_EVENT_O = ID_EVENT,
+                           ID_CLI,
+                           ID_CAMP,
+                           TYP_CAMP,
+                           ID_DELIVERY,
+                           OPEN_DATETIME = EVENT_DATETIME,
+                           OPEN_DATE = EVENT_DATE) %>% 
+                    as.data.frame()
+
+d6_total_opens <- d6_opens_parz                                  %>%
+                  group_by(ID_CLI,
+                           ID_CAMP,
+                           ID_DELIVERY)                       %>% 
+                  summarise(NUM_OPENs = n_distinct(ID_EVENT_O))   
+                
+d6_opens <- d6_opens_parz                                 %>%
+              left_join(d6_total_opens,
+                        by = c("ID_CLI",
+                               "ID_CAMP",
+                               "ID_DELIVERY"))            %>% 
+              group_by(ID_CLI,
+                       ID_CAMP,
+                       ID_DELIVERY)                       %>% 
+              filter(OPEN_DATETIME == min(OPEN_DATETIME)) %>% 
+              filter(row_number() == 1)                   %>%
+              ungroup()                                   %>%
+              as.data.frame()
+```
+
+
+
+```{r}
+#si contano i click nelle comunicazioni cercando di non contare più di un click, per questo si conta solo il primo
+d6_clicks_parz <- data6_complete                              %>%
+                      filter(TYP_EVENT == "C")                      %>%
+                      select(-TYP_EVENT)                            %>%
+                      select(ID_EVENT_C = ID_EVENT,
+                             ID_CLI,
+                             ID_CAMP,
+                             TYP_CAMP,
+                             ID_DELIVERY,
+                             CLICK_DATETIME = EVENT_DATETIME,
+                             CLICK_DATE = EVENT_DATE)                   
+                    
+d6_total_clicks <- d6_clicks_parz                                    %>%
+                    group_by(ID_CLI,
+                             ID_CAMP,
+                             ID_DELIVERY)                         %>% 
+                    summarise(NUM_CLICKs = n_distinct(ID_EVENT_C))    
+
+d6_clicks <- d6_clicks_parz                                   %>%
+                left_join(d6_total_clicks,
+                          by = c("ID_CLI",
+                                 "ID_CAMP",
+                                 "ID_DELIVERY"))              %>% 
+                group_by(ID_CLI,
+                         ID_CAMP,
+                         ID_DELIVERY)                         %>% 
+                filter(CLICK_DATETIME == min(CLICK_DATETIME)) %>% 
+                filter(row_number() == 1) %>%
+                ungroup()                                     %>%
+                as.data.frame()
+```
+
+```{r }
+#si contano i fallimenti
+d6_fails <- data6_complete                          %>%
+              filter(TYP_EVENT == "F")                    %>% 
+              select(-TYP_EVENT)                          %>%
+              select(ID_EVENT_F = ID_EVENT,
+                     ID_CLI,
+                     ID_CAMP,
+                     TYP_CAMP,
+                     ID_DELIVERY,
+                     FAIL_DATETIME = EVENT_DATETIME,
+                     FAIL_DATE = EVENT_DATE)              %>% 
+              group_by(ID_CLI,
+                       ID_CAMP,
+                       ID_DELIVERY)                       %>% 
+              filter(FAIL_DATETIME == min(FAIL_DATETIME)) %>% 
+              filter(row_number() == 1)                   %>%
+              ungroup()                                   %>%
+              as.data.frame()
+```
+
+
+```{r }
+#si combinano tutte le informazioni ricavate precedentemente sugli eventi in un'unica variabile
+data6_complete_finale <- d6_sends                     %>%
+                                left_join(d6_opens,
+                                          by = c("ID_CLI",
+                                                 "ID_CAMP",
+                                                 "ID_DELIVERY",
+                                                 "TYP_CAMP"))                            %>% 
+                                filter(is.na(OPEN_DATE) | SEND_DATE <= OPEN_DATE)        %>%
+                                left_join(d6_clicks,
+                                          by = c("ID_CLI",
+                                                 "ID_CAMP",
+                                                 "ID_DELIVERY",
+                                                 "TYP_CAMP"))                            %>% 
+                                filter(is.na(CLICK_DATE) | OPEN_DATE <= CLICK_DATE)      %>%
+                                left_join(d6_fails,
+                                          by = c("ID_CLI",
+                                                 "ID_CAMP",
+                                                 "ID_DELIVERY",
+                                                 "TYP_CAMP"))                            %>% 
+                                filter(is.na(FAIL_DATE) | SEND_DATE <= FAIL_DATE)        %>% 
+                                mutate(OPENED = !is.na(ID_EVENT_O))                      %>% 
+                                mutate(CLICKED = !is.na(ID_EVENT_C))                     %>% 
+                                mutate(FAILED = !is.na(ID_EVENT_F))                      %>% 
+                                mutate(DAYS_TO_OPEN = as.integer(OPEN_DATE - SEND_DATE)) %>%
+                                select(ID_EVENT_S,
+                                       ID_CLI,
+                                       ID_CAMP,
+                                       TYP_CAMP,
+                                       ID_DELIVERY,
+                                       SEND_DATE,
+                                       OPENED,
+                                       OPEN_DATE,
+                                       DAYS_TO_OPEN,
+                                       NUM_OPENs,
+                                       CLICKED,
+                                       CLICK_DATE,
+                                       NUM_CLICKs,
+                                       FAILED)                                                
+```
+
+### Analisi esplorative
+
+```{r }
+#analisi panoramica del dataset
+d6_overview <- data6_complete_finale %>% 
+                  summarise(MIN_DATE = min(SEND_DATE),           
+                            MAX_DATE = max(SEND_DATE),           
+                            TOT_EVENTs = n_distinct(ID_EVENT_S), 
+                            TOT_CLIs = n_distinct(ID_CLI))       
+
+knitr::kable(d6_overview)
+```
+
+```{r }
+#analisi distribuzione variabile `TYP_CAMP` tramite grafico
+data6_typ_camp <- data6_complete_finale %>%
+                        group_by(TYP_CAMP)      %>%                    
+                        summarise(MIN_DATE = min(SEND_DATE),           
+                                  MAX_DATE = max(SEND_DATE),           
+                                  TOT_EVENTs = n_distinct(ID_EVENT_S), 
+                                  TOT_CLIs = n_distinct(ID_CLI))      
+
+knitr::kable(data6_typ_camp)
+
+ggplot(data = data6_typ_camp,
+       aes(x = TYP_CAMP,
+           y = TOT_EVENTs)) +    
+  geom_bar(stat = "identity",
+           fill = "steelblue") + 
+  theme_minimal()                
+```
+
+```{r }
+#analisi distribuzione variabile `OPENED` mediante grafico
+data6_opened <- data6_complete_finale                        %>%
+                      group_by(OPENED)                               %>%
+                      summarise(TOT_EVENTs = n_distinct(ID_EVENT_S),              
+                                TOT_CLIs = n_distinct(ID_CLI))       %>%          
+                      mutate(TYP_CAMP = 'ALL')                       %>%
+                      mutate(PERCENT_EVENTs = TOT_EVENTs/d6_overview$TOT_EVENTs, 
+                             PERCENT_CLIs = TOT_CLIs/d6_overview$TOT_CLIs)       
+
+knitr::kable(data6_opened)
+
+ggplot(data = data6_opened,
+         aes(fill = OPENED,
+             x = TYP_CAMP,
+             y = TOT_EVENTs)) +  
+    geom_bar(stat = "identity",
+             position = "fill") +
+    theme_minimal()               
+```
+
+```{r }
+#analisi distribuzione della variabie riguardante le mail degli eventi aperte, tenendo in considerazione le tipologie della campagna, mediante grafici che mostrano in valore assoluto e in percentuale
+data6_openedbytyp <- data6_complete_finale                         %>%
+                          group_by(TYP_CAMP, OPENED)                       %>% 
+                          summarise(TOT_EVENTs = n_distinct(ID_EVENT_S),
+                                    TOT_CLIs = n_distinct(ID_CLI))         %>% 
+                          left_join(data6_typ_camp %>%
+                                      select(TYP_CAMP,
+                                             ALL_TOT_EVENTs = TOT_EVENTs,
+                                             ALL_TOT_CLIs = TOT_CLIs),
+                                    by = 'TYP_CAMP')                       %>% 
+                          mutate(PERCENT_EVENTs = TOT_EVENTs/ALL_TOT_EVENTs,
+                                 PERCENT_CLIs = TOT_CLIs/ALL_TOT_CLIs)     %>% 
+                          select(TYP_CAMP,
+                                 OPENED,
+                                 TOT_EVENTs,
+                                 TOT_CLIs,
+                                 PERCENT_EVENTs,
+                                 PERCENT_CLIs)                                 
+
+knitr::kable(data6_openedbytyp)
+
+
+ggplot(data = data6_openedbytyp,
+       aes(fill = OPENED,
+           x = TYP_CAMP,
+           y = TOT_EVENTs)) +      
+  geom_bar(stat = "identity") +     
+  theme_minimal() +               
+  labs(title="APERTURA MAIL PER TIPOLOGIA DI CAMPAGNA")
+
+
+ggplot(data = data6_openedbytyp,
+       aes(fill = OPENED,
+           x = TYP_CAMP,
+           y = TOT_EVENTs)) +      
+  geom_bar(position = "fill",
+           stat = "identity") +     
+  theme_minimal()                   
+```
+
+
+```{r }
+#analisi distribuzione della variabile `DAYS_TO_OPEN` mediante grafico
+data6_daystoopen <- data6_complete_finale   %>%
+                          filter(OPENED)        %>%
+                          group_by(ID_CLI)     %>% 
+                          summarise(AVG_DAYS_TO_OPEN = floor(mean(DAYS_TO_OPEN))) %>% 
+                          ungroup()                 %>%
+                          group_by(AVG_DAYS_TO_OPEN)         %>% 
+                          summarise(TOT_CLIs = n_distinct(ID_CLI)) 
+
+knitr::kable(head(data6_daystoopen))
+
+ggplot(data = data6_daystoopen %>%
+         filter(AVG_DAYS_TO_OPEN < 14),
+       aes(x = AVG_DAYS_TO_OPEN,
+           y = TOT_CLIs)) +             
+  geom_bar(stat = "identity",
+           fill = "steelblue") +        
+  theme_minimal()                       
+
+
+
+data6_daystoopen_vs_cumulate <- data6_daystoopen         %>%
+                                      arrange(AVG_DAYS_TO_OPEN) %>%
+                                      mutate(PERCENT_COVERED = cumsum(TOT_CLIs)/sum(TOT_CLIs))
+
+
+ggplot(data = data6_daystoopen_vs_cumulate %>%
+         filter(AVG_DAYS_TO_OPEN < 14),
+       aes(x = AVG_DAYS_TO_OPEN,
+           y = PERCENT_COVERED)) +           
+  geom_line() +
+  geom_point() +                             
+  scale_x_continuous(breaks = seq(0, 14, 2),
+                     minor_breaks = 0:14) +  
+  theme_minimal() +  
+  labs(title="DISTRIBUZIONE GIORNI PRIMA DELL'APERTURA DELLA MAIL")
+
+```
+
+```{r }
+#analisi distribuzione della variabile `CLICKED`, in relazione alla tipologia di campagna, mediante grafici in valore assoluto e in percentuale
+data6_clickedbytyp <- data6_complete_finale                      %>%
+                            group_by(TYP_CAMP,
+                                     CLICKED)                            %>% 
+                            summarise(TOT_EVENTs = n_distinct(ID_EVENT_S),
+                                      TOT_CLIs = n_distinct(ID_CLI))     %>% 
+                            left_join(data6_typ_camp                  %>%
+                                        select(TYP_CAMP,
+                                               ALL_TOT_EVENTs = TOT_EVENTs,
+                                               ALL_TOT_CLIs = TOT_CLIs),
+                                      by='TYP_CAMP')                     %>% 
+                            mutate(PERCENT_EVENTs = TOT_EVENTs/ALL_TOT_EVENTs,
+                                   PERCENT_CLIs = TOT_CLIs/ALL_TOT_CLIs) %>% 
+                            select(TYP_CAMP,
+                                   CLICKED,
+                                   TOT_EVENTs,
+                                   TOT_CLIs,
+                                   PERCENT_EVENTs,
+                                   PERCENT_CLIs)                             
+
+knitr::kable(data6_clickedbytyp)
+
+ggplot(data = data6_clickedbytyp,
+       aes(fill = CLICKED,
+           x = TYP_CAMP,
+           y = TOT_EVENTs)) +   
+  geom_bar(stat = "identity") + 
+  theme_minimal()               
+
+
+ggplot(data = data6_clickedbytyp,
+       aes(fill = CLICKED,
+             x = TYP_CAMP,
+             y = TOT_EVENTs)) + 
+  geom_bar(position = "fill",
+           stat = "identity") + 
+  theme_minimal()               
+
+```
+
+```{r }
+#analisi distribuzione della variabile `FAILED`, in relazione alla tipologia di campagna, mediante grafici in valore assoluto e in percentuale 
+data6_failedbytyp <- data6_complete_finale                     %>%
+                          group_by(TYP_CAMP,
+                                   FAILED)                             %>% 
+                          summarise(TOT_EVENTs = n_distinct(ID_EVENT_S),
+                                    TOT_CLIs = n_distinct(ID_CLI))     %>% 
+                          left_join(data6_typ_camp                  %>%
+                                      select(TYP_CAMP,
+                                             ALL_TOT_EVENTs = TOT_EVENTs,
+                                             ALL_TOT_CLIs = TOT_CLIs),
+                                    by = 'TYP_CAMP')                   %>% 
+                          mutate(PERCENT_EVENTs = TOT_EVENTs/ALL_TOT_EVENTs,
+                                 PERCENT_CLIs = TOT_CLIs/ALL_TOT_CLIs) %>% #-- Percentuale
+                          select(TYP_CAMP,
+                                 FAILED,
+                                 TOT_EVENTs,
+                                 TOT_CLIs,
+                                 PERCENT_EVENTs,
+                                 PERCENT_CLIs)                             
+
+knitr::kable(data6_failedbytyp)
+
+
+ggplot(data = data6_failedbytyp,
+       aes(fill = FAILED,
+           x = TYP_CAMP,
+           y = TOT_EVENTs)) +  
+  geom_bar(stat = "identity") + 
+  theme_minimal()               
+
+
+ggplot(data = data6_failedbytyp,
+       aes(fill = FAILED,
+           x = TYP_CAMP,
+           y = TOT_EVENTs)) +   
+  geom_bar(position = "fill",   
+           stat = "identity") + 
+  theme_minimal()               
+```
+
+
+```{r}
+#analisi distribuzione della variabile `NUM_OPENs` mediante grafico
+data6_numopens <- data6_complete_finale                  %>%
+                      group_by(NUM_OPENs)                        %>% 
+                      summarise(TOT_ID = n_distinct(ID_EVENT_S)) %>% 
+                      mutate(PERCENT = TOT_ID/sum(TOT_ID))       %>% 
+                      arrange(desc(PERCENT))                         
+
+knitr::kable(head(data6_numopens))
+
+ggplot(data = data6_numopens,
+       aes(x = NUM_OPENs,
+           y = TOT_ID)) +       
+  geom_bar(stat = "identity",
+           fill = "steelblue") + 
+  xlim(0, 15) +                  
+  theme_minimal()                
+```
+
+
+```{r }
+#analisi distribuzione della variabile `NUM_CLICKs` mediante grafico
+data6_numclicks <- data6_complete_finale                   %>%
+                        group_by(NUM_CLICKs)                       %>% 
+                        summarise(TOT_ID = n_distinct(ID_EVENT_S)) %>% 
+                        mutate(PERCENT = TOT_ID/sum(TOT_ID))       %>% 
+                        arrange(desc(PERCENT))                         
+
+knitr::kable(head(data6_numclicks))
+
+ggplot(data = data6_numclicks,
+       aes(x = NUM_CLICKs,
+           y = TOT_ID)) +        
+  geom_bar(stat = "identity",
+           fill = "steelblue") + 
+  xlim(0, 15) +                  
+  theme_minimal()                
+```
+
+## Settimo dataset
+
+### Pulizia
+
+```{r }
+#formattazione della data e fattorizzazione della variabile `DIREZIONE`
+data7_complete <- data7 %>%
+                    mutate(TIC_DATETIME = as.POSIXct(DATETIME,
+                                                     format = "%Y-%m-%dT%H%M%S")) %>% 
+                    mutate(TIC_HOUR = hour(TIC_DATETIME))                         %>% 
+                    mutate(TIC_DATE = as.Date(TIC_DATETIME))                      %>% 
+                    select(-DATETIME)                                             %>% 
+                    mutate(DIREZIONE = as.factor(DIREZIONE))                      %>% 
+                    mutate(COD_REPARTO = as.factor(COD_REPARTO))                      
+```
+
+### Reshaping
+
+```{r}
+#creazione di features per differenziare tipologie di giorno
+data7_complete <- data7_complete %>%
+                    mutate(TIC_DATE_WEEKDAY = wday(TIC_DATE))               %>% 
+                    mutate(TIC_DATE_HOLIDAY = isHoliday("Italy", TIC_DATE)) %>% 
+                    mutate(TIC_DATE_TYP = case_when(
+                      (TIC_DATE_WEEKDAY %in% c(6,7)) ~ "weekend",
+                      (TIC_DATE_HOLIDAY == TRUE) ~ "holiday",
+                      (TIC_DATE_WEEKDAY < 7) ~ "weekday",
+                      TRUE ~ "other"))
+```
+
+### Analisi esplorative
+
+```{r }
+#analisi della variabile `TIC_DATE`
+d7_panoramica <- data7_complete %>% 
+                  summarise(MIN_DATE = min(TIC_DATE),           
+                            MAX_DATE = max(TIC_DATE),            
+                            TOT_TICs = n_distinct(ID_SCONTRINO), 
+                            TOT_CLIs = n_distinct(ID_CLI))       
+
+knitr::kable(d7_panoramica)
+```
+
+```{r }
+#analisi distribuzione della variabile `DIREZIONE` di cui quasi il 91% dei casi sono acquisti
+data7_direction <- data7_complete %>%
+                        group_by(DIREZIONE)                            %>%    
+                        summarise(TOT_TICs = n_distinct(ID_SCONTRINO),
+                                  TOT_CLIs = n_distinct(ID_CLI))       %>%    
+                        mutate(PERCENT_TICs = TOT_TICs/d7_panoramica$TOT_TICs, 
+                               PERCENT_CLIs = TOT_CLIs/d7_panoramica$TOT_CLIs)
+
+knitr::kable(data7_direction)
+```
+
+```{r }
+#analisi distribuzione della variabile `DIREZIONE` secondo la variabile `TIC_HOURS` mediante grafico in numeri assoluti e in percentuale
+data7_hour <- data7_complete %>%
+                    group_by(TIC_HOUR, DIREZIONE)                  %>% 
+                    summarise(TOT_TICs = n_distinct(ID_SCONTRINO),
+                              TOT_CLIs = n_distinct(ID_CLI))       %>% 
+                    left_join(data7_direction                   %>% 
+                                select(DIREZIONE,
+                                       ALL_TOT_TICs = TOT_TICs,
+                                       ALL_TOT_CLIs = TOT_CLIs),
+                              by = 'DIREZIONE')                    %>%
+                    mutate(PERCENT_TICs = TOT_TICs/ALL_TOT_TICs,
+                           PERCENT_CLIs = TOT_CLIs/ALL_TOT_CLIs)   %>% 
+                    select(-ALL_TOT_TICs,
+                           -ALL_TOT_CLIs)
+
+knitr::kable(head(data7_hour))
+
+
+ggplot(data = data7_hour,
+       aes(fill = DIREZIONE,
+           x = TIC_HOUR,
+           y = TOT_TICs)) +     
+  geom_bar(stat = "identity") + 
+  theme_minimal() +              
+  labs(title="DISTRIBUZIONE ACQUISTI PER ORA")
+
+
+ggplot(data = data7_hour,
+       aes(fill = DIREZIONE,
+           x = TIC_HOUR,
+           y = TOT_TICs)) +      
+  geom_bar(stat = "identity",
+           position = "fill" ) + 
+  theme_minimal()                
+```
+
+```{r }
+#analisi distribuzione della variabile `DIREZIONE` secondo la variabile `COD_REPARTO` mediante grafici in termini assoluti e percentuali
+data7_rep <- data7_complete                                  %>%
+                  group_by(COD_REPARTO, DIREZIONE)             %>% 
+                  summarise(TOT_TICs = n_distinct(ID_SCONTRINO),
+                            TOT_CLIs = n_distinct(ID_CLI))     %>% 
+                  left_join(data7_direction                 %>%
+                              select(DIREZIONE,
+                                     ALL_TOT_TICs = TOT_TICs,
+                                     ALL_TOT_CLIs = TOT_CLIs),
+                            by = 'DIREZIONE')                  %>% 
+                  mutate(PERCENT_TICs = TOT_TICs/ALL_TOT_TICs,
+                         PERCENT_CLIs = TOT_CLIs/ALL_TOT_CLIs) %>% 
+                    select(-ALL_TOT_TICs, -ALL_TOT_CLIs)
+    
+knitr::kable(head(data7_rep))
+
+
+ggplot(data = data7_rep,
+       aes(fill = DIREZIONE,
+           x = COD_REPARTO,
+           y = TOT_TICs)) +     
+  geom_bar(stat = "identity") + 
+  theme_minimal()               
+
+
+ggplot(data = data7_rep,
+       aes(fill = DIREZIONE,
+           x = COD_REPARTO,
+           y = TOT_TICs)) +      
+  geom_bar(stat = "identity",
+           position = "fill" ) + 
+  theme_minimal()                
+```
+
+
+```{r }
+#analisi distribuzione della variabile `DIREZIONE` secondo la variabile `TIC_DATE_TYP` mediante grafici in termini assoluti e percentuali
+data7_datetyp <- data7_complete                                  %>%
+                      group_by(TIC_DATE_TYP, DIREZIONE)            %>% 
+                      summarise(TOT_TICs = n_distinct(ID_SCONTRINO),
+                                TOT_CLIs = n_distinct(ID_CLI))     %>% 
+                      left_join(data7_direction                %>%
+                                  select(DIREZIONE,
+                                         ALL_TOT_TICs = TOT_TICs,
+                                         ALL_TOT_CLIs = TOT_CLIs),
+                                by = 'DIREZIONE')                  %>% 
+                      mutate(PERCENT_TICs = TOT_TICs/ALL_TOT_TICs,
+                             PERCENT_CLIs = TOT_CLIs/ALL_TOT_CLIs) %>% 
+                      select(-ALL_TOT_TICs, -ALL_TOT_CLIs)
+
+knitr::kable(data7_datetyp)
+
+
+ggplot(data = data7_datetyp,
+       aes(fill = DIREZIONE,
+           x = TIC_DATE_TYP,
+           y = TOT_TICs)) +    
+ geom_bar(stat = "identity") + 
+ theme_minimal()              
+
+
+ggplot(data = data7_datetyp,
+       aes(fill = DIREZIONE,
+           x = TIC_DATE_TYP,
+           y = TOT_TICs)) +      
+  geom_bar(stat = "identity",
+           position = "fill" ) + 
+  theme_minimal()               
+```
+
+
+```{r, warning= FALSE }
+#analisi distribuzione della variabile `DIREZIONE` secondo la variabili `IMPORTO_LORDO` e `SCONTO` mediante grafico
+data7_importosconto <- data7_complete                      %>%
+                            group_by(ID_SCONTRINO, DIREZIONE) %>% 
+                            summarise(IMPORTO_LORDO = sum(IMPORTO_LORDO),
+                                      SCONTO = sum(SCONTO))   %>% 
+                            ungroup()                         %>%
+                            as.data.frame()
+
+data7_avgimportosconto <- data7_importosconto %>%
+                                group_by(DIREZIONE) %>%                            
+                                summarise(AVG_IMPORTO_LORDO = mean(IMPORTO_LORDO), 
+                                AVG_SCONTO = mean(SCONTO))
+
+
+ggplot(data = data7_importosconto %>%
+         filter((IMPORTO_LORDO > -1000) & (IMPORTO_LORDO < 1000)), 
+       aes(color = DIREZIONE,
+           x = IMPORTO_LORDO)) + 
+  geom_histogram(binwidth = 10,
+                 fill = "white",
+                 alpha = 0.5) +  
+  theme_minimal()                
+
+
+ggplot(data = data7_importosconto %>%
+         filter((SCONTO > -250) & (IMPORTO_LORDO < 250)), 
+       aes(color = DIREZIONE, x = SCONTO)) + 
+  geom_histogram(binwidth = 10,
+                 fill = "white",
+                 alpha = 0.5) +              
+  theme_minimal()                           
+```
+
+
+```{r }
+#analisi distribuzione della variabile `DIREZIONE` secondo la variabili `IMPORTO_LORDO`,`SCONTO` e `COD_REPARTO` mediante grafico
+data7_importosconto_cod_rep <- data7_complete %>%
+                                    group_by(COD_REPARTO, DIREZIONE) %>% 
+                                    summarise(IMPORTO_LORDO = sum(IMPORTO_LORDO),
+                                              SCONTO = sum(SCONTO)) %>%  
+                                    ungroup() %>%
+                                    as.data.frame()
+
+knitr::kable(head(data7_importosconto_cod_rep))
+
+
+ggplot(data = data7_importosconto_cod_rep,
+       aes(fill = DIREZIONE,
+           x = COD_REPARTO,
+           y = IMPORTO_LORDO)) + 
+ geom_bar(stat = "identity") +   
+ theme_minimal()                 
+
+
+ggplot(data = data7_importosconto_cod_rep,
+       aes(fill = DIREZIONE,
+           x = COD_REPARTO,
+           y = SCONTO)) +     
+ geom_bar(stat = "identity") + 
+ theme_minimal()               
+```
+
+```{r}
+#analisi distribuzione della variabile `DIREZIONE` secondo la variabile `ID_ARTICOLO`
+data7_complete$ID_ARTICOLO <- as.factor(data7_complete$ID_ARTICOLO) 
+
+data7_id_articolo <- data7_complete                                       %>%
+                          filter(DIREZIONE == 1)                            %>% 
+                          group_by(ID_ARTICOLO)                             %>% 
+                          summarise(NUM_VENDITE = n_distinct(ID_SCONTRINO)) %>% 
+                          ungroup()                                         %>%
+                          as.data.frame()                                   %>%
+                          arrange(desc(NUM_VENDITE))  
+
+knitr::kable(head(data7_id_articolo))
+```
+
+```{r }
+#analisi distribuzione della variabile `DIREZIONE` secondo la variabile `ID_CLIENTE`
+data7_importosconto_id_cli <- data7_complete                %>%
+                                    filter(DIREZIONE == 1)          %>%
+                                    group_by(ID_CLI)                %>% 
+                                    summarise(IMPORTO_LORDO = sum(IMPORTO_LORDO),
+                                              SCONTO = sum(SCONTO)) %>% 
+                                    ungroup()                       %>%
+                                    as.data.frame()                 %>%
+                                    arrange(desc(IMPORTO_LORDO))  
+
+knitr::kable(head(data7_importosconto_id_cli))
+```
+
+```{r }
+#analisi distribuzione della total purchase
+data7_tot_purch <- data7_complete %>%
+                        filter(DIREZIONE == 1)                             %>% 
+                        group_by(ID_CLI)                                   %>% 
+                        summarise(TOT_PURCHASE = n_distinct(ID_SCONTRINO)) %>% 
+                        arrange(desc(TOT_PURCHASE))                            
+
+knitr::kable(head(data7_tot_purch))
+```
+
+
+
+```{r }
+#analisi della total purchse curve mediante grafico
+
+data_next_purchase <- data7_complete %>%
+                            filter(DIREZIONE == 1) %>% 
+                            select(ID_CLI,
+                                   ID_ARTICOLO,
+                                   TIC_DATE,
+                                   DIREZIONE)      %>% 
+                            arrange(ID_CLI)
+
+
+
+memory.limit(10000000)
+d7_nextpurchase <- data_next_purchase %>%
+  group_by(ID_CLI) %>%
+  mutate(Diff = TIC_DATE - lag(TIC_DATE))
+
+x <- as.data.frame(table(d7_nextpurchase$Diff))
+x <- x[-1, ]
+x$Perc <- x$Freq/sum(x$Freq)
+
+
+ggplot(x, 
+       aes(x = as.numeric(Var1), y = cumsum(Perc))) +
+  xlim(0, 100) + 
+  geom_line()
+```
+
+# Modello RFM 
+
+L'analisi Recency, Frequency, Monetary (RFM) è un'analisi di marketing che utilizza appunto queste 3 metriche per segmentare la base dei clienti. La Recency valuta quanto recentemente il client ha fatto un acquisto, la Frequency valuta quanto spesso un cliente fa un acquisto e la Monetary quanti soldi spende il cliente per un acquisto. 
+
+Si selezionano i clienti attivi, ovvero quelli che hanno effettuato il loro ultimo acquisto dopo il 01/01/2019:
+
+```{r }
+rfm_periodo_studio <- data7_complete %>%
+                      filter(TIC_DATE > as.Date("01/01/2019",
+                                                format = "%d/%m/%Y")) 
+
+knitr::kable(head(rfm_periodo_studio))
+```
+
+
+
+## Recency
+
+```{r}
+#raggruppo per cliente e calcolo la recency
+rfm_recency <- rfm_periodo_studio %>%
+                  filter(DIREZIONE == 1) %>% 
+                  group_by(ID_CLI)       %>% 
+                  summarise(LAST_PURCHASE_DATE = max(TIC_DATE))
+
+rfm_recency$RECENCY <- difftime(as.Date("30/04/2019",
+                                        format = "%d/%m/%Y"),        
+                                     rfm_recency$LAST_PURCHASE_DATE,
+                                units = "days")
+
+knitr::kable(head(rfm_recency))
+```
+
+```{r }
+#si dividono i clienti in base ai percentili identificando il valore di recency in 3 categorie: 0-25, 25-75, 75-100. Si visualizza la distribuzione mediante grafico.
+rfm_recency <- within(rfm_recency,
+                 REC_CLASS <- cut(as.numeric(rfm_recency$RECENCY),
+                                  breaks = quantile(rfm_recency$RECENCY,
+                                                    probs = c(0, .25, .75, 1)), 
+                                  include.lowest = T,
+                                  labels = c("low", "medium", "high")))         
+
+rec_label <- as.data.frame(table(rfm_recency$REC_CLASS))
+
+ggplot(data = rec_label,
+       aes(x = Var1, y = Freq,
+           fill = Freq)) +                        
+  geom_bar(stat = "identity") +                   
+  labs(title = "Recency Distribution",
+       x     = "Recency Classes",
+       y     = "Total Purchase") +                
+  theme_minimal() +                              
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_discrete(labels = c("Low", "Medium", "High")) + 
+  guides(fill = FALSE)
+```
+
+## Frequency
+
+```{r }
+#calcolo della frequency per cliente
+rfm_frequency <- rfm_periodo_studio                                      %>%
+                    filter(DIREZIONE == 1)                             %>% 
+                    group_by(ID_CLI)                                   %>% 
+                    summarise(TOT_PURCHASE = n_distinct(ID_SCONTRINO)) %>% 
+                    arrange(desc(TOT_PURCHASE)) 
+
+knitr::kable(head(rfm_frequency))
+```
+
+```{r }
+#si dividono i clienti in base ai percentili identificando il valore di frequency in 3 categorie: 0-25, 25-75, 75-100. Si visualizza la distribuzione mediante grafico
+rfm_frequency <- within(rfm_frequency,
+                   FREQ_CLASS <- cut(rfm_frequency$TOT_PURCHASE,
+                                     breaks = c(0, 2, 5, 101),             
+                                     include.lowest = T,
+                                     right = F,
+                                     labels = c("low", "medium", "high"))) 
+
+table(rfm_frequency$FREQ_CLASS)
+
+freq_label <- as.data.frame(table(rfm_frequency$FREQ_CLASS))
+
+ggplot(data = freq_label,
+       aes(x = Var1, y = Freq,
+           fill = Freq)) +                        
+  geom_bar(stat = "identity") +                   
+  labs(title = "Frequency Distribution",
+       x     = "Frequency Classes",
+       y     = "Total Purchase") +                
+  theme_minimal() +                               
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_discrete(labels = c("Low", "Medium", "High")) + 
+  guides(fill = FALSE)
+```
+
+## Monetary
+
+
+```{r}
+#calcolo monetary per ogni cliente
+rfm_monetary <- rfm_periodo_studio                           %>%
+                  filter(DIREZIONE == 1)                    %>% 
+                  group_by(ID_CLI)                          %>% 
+                  summarise(IMPORTO_LORDO = sum(IMPORTO_LORDO),
+                            SCONTO = sum(SCONTO),
+                            SPESA = IMPORTO_LORDO - SCONTO) %>%
+                  ungroup()                                 %>%
+                  as.data.frame()                           %>%
+                  arrange(desc(IMPORTO_LORDO))  
+
+knitr::kable(head(rfm_monetary))
+```
+
+
+```{r }
+#si dividono i clienti in base ai percentili identificando il valore di monetary in 3 categorie: 0-25, 25-75, 75-100. Si visualizza la distribuzione mediante grafico
+rfm_monetary <- within(rfm_monetary,
+                   MON_CLASS <- cut(rfm_monetary$SPESA,
+                                    breaks = quantile(rfm_monetary$SPESA,
+                                                      probs = c(0, .25, .75, 1)), 
+                                    include.lowest = T,
+                                    labels = c("low", "medium", "high"))) 
+
+table(rfm_monetary$MON_CLASS)
+
+mon_label <- as.data.frame(table(rfm_monetary$MON_CLASS))
+
+ggplot(data = mon_label,
+       aes(x = Var1, y = Freq,
+           fill = Freq)) +                        
+  geom_bar(stat = "identity") +                   
+  labs(title = "Monetary Distribution",
+       x     = "Monetary Classes",
+       y     = "Total Amount") +                 
+  theme_minimal() +                               
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_discrete(labels = c("Low", "Medium", "High")) + 
+  guides(fill = FALSE)
+```
+
+## Merge
+
+Creazione del dataset contenente tutte e 3 le metriche
+
+```{r }
+#si uniscono i 3 dataset tramite 2 merge
+
+rfm <- merge(rfm_frequency, 
+             rfm_monetary,  
+             by = "ID_CLI") 
+
+rfm <- merge(rfm,           
+             rfm_recency,   
+             by = "ID_CLI")
+
+knitr::kable(head(rfm))
+```
+
+```{r}
+#combinazione delle categorie recency e frequency per definire più accuratamente loyalty satus dei clienti
+
+rfm$RF <- NA
+
+for(i in c(1:nrow(rfm))){
+  if(rfm$REC_CLASS[i] == "low" && rfm$FREQ_CLASS[i] == "low") rfm$RF[i] <- "One-Timer"
+  if(rfm$REC_CLASS[i] == "medium" && rfm$FREQ_CLASS[i] == "low") rfm$RF[i] <- "One-Timer"
+  if(rfm$REC_CLASS[i] == "high" && rfm$FREQ_CLASS[i] == "low") rfm$RF[i] <- "Leaving"
+  if(rfm$REC_CLASS[i] == "low" && rfm$FREQ_CLASS[i] == "medium") rfm$RF[i] <- "Engaged"
+  if(rfm$REC_CLASS[i] == "medium" && rfm$FREQ_CLASS[i] == "medium") rfm$RF[i] <- "Engaged"
+  if(rfm$REC_CLASS[i] == "high" && rfm$FREQ_CLASS[i] == "medium") rfm$RF[i] <- "Leaving"
+  if(rfm$REC_CLASS[i] == "low" && rfm$FREQ_CLASS[i] == "high") rfm$RF[i] <- "Top"
+  if(rfm$REC_CLASS[i] == "medium" && rfm$FREQ_CLASS[i] == "high") rfm$RF[i] <- "Top"
+  if(rfm$REC_CLASS[i] == "high" && rfm$FREQ_CLASS[i] == "high") rfm$RF[i] <- "Leaving Top"
+}
+
+table(rfm$RF)
+```
+
+Creiamo il grafico per la variabile `RF`:
+
+```{r }
+#creata variabile recency-frequency e analisi della sua distribuzione mediante grafico
+
+rf_data <- as.data.frame(rbind(c("Top",         "High",   "Low",    16248),
+                              c("Top",         "High",   "Medium", 16248),
+                              c("Leaving Top", "High",   "High",   592),
+                              c("Engaged",     "Medium", "Low",    36316),
+                              c("Engaged",     "Medium", "Medium", 36316),
+                              c("Leaving",     "Medium", "High",   27187),
+                              c("One Timer",   "Low",    "Low",    32763),
+                              c("One Timer",   "Low",    "Medium", 32763),
+                              c("Leaving",     "Low",    "High",   27187))) 
+
+colnames(rf_data) <-  c("Level", "Frequency", "Recency", "Value")
+rf_data$Frequency <- factor(rf_data$Frequency,
+                          levels = c("High", "Medium", "Low"))
+rf_data$Recency <- factor(rf_data$Recency,
+                          levels = c("High", "Medium", "Low"))
+rf_data$Value <- as.numeric(rf_data$Value)
+
+
+ggplot(rf_data, aes(x = Frequency, y = Recency, fill = Value)) + 
+  geom_tile() +
+  geom_text(aes(label = Level)) +
+  scale_fill_distiller(palette = "Spectral")+
+  theme_minimal()+
+  labs(title="TABELLA RF")
+
+rf <- as.data.frame(table(rfm$RF))
+rf
+
+
+ggplot(data = rf,
+       aes(x = Var1, y = Freq,
+           fill = Freq)) +                        
+  geom_bar(stat = "identity") +                  
+  scale_colour_brewer(palette = "RdBu") +
+  labs(title = "DISTRIBUZIONE CLASSI RF",
+       x     = "RF Classes",
+       y     = "Total Clients") +                
+  theme_minimal() +                               
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_discrete(labels = c("Engaged", "Leaving", "Leaving Top",
+                              "One Timer", "Top")) + 
+  guides(fill = FALSE)
+```
+
+Infine, le classi RFM sono ottenute combinando le classi RF con i gruppi di monetary:
+
+```{r}
+#creazione della variabile rfm che combina le classi della variabile recency-frequency con le categorie di monetary
+
+rfm$RFM <- NA
+
+for(i in c(1:nrow(rfm))){
+  if(rfm$RF[i] == "One-Timer" && rfm$MON_CLASS[i] == "low") rfm$RFM[i] <- "Cheap"
+  if(rfm$RF[i] == "Leaving" && rfm$MON_CLASS[i] == "low") rfm$RFM[i] <- "Tin"
+  if(rfm$RF[i] == "Engaged" && rfm$MON_CLASS[i] == "low") rfm$RFM[i] <- "Copper"
+  if(rfm$RF[i] == "Leaving Top" && rfm$MON_CLASS[i] == "low") rfm$RFM[i] <- "Bronze"
+  if(rfm$RF[i] == "Top" && rfm$MON_CLASS[i] == "low") rfm$RFM[i] <- "Silver"
+  
+  if(rfm$RF[i] == "One-Timer" && rfm$MON_CLASS[i] == "medium") rfm$RFM[i] <- "Tin"
+  if(rfm$RF[i] == "Leaving" && rfm$MON_CLASS[i] == "medium") rfm$RFM[i] <- "Copper"
+  if(rfm$RF[i] == "Engaged" && rfm$MON_CLASS[i] == "medium") rfm$RFM[i] <- "Bronze"
+  if(rfm$RF[i] == "Leaving Top" && rfm$MON_CLASS[i] == "medium") rfm$RFM[i] <- "Silver"
+  if(rfm$RF[i] == "Top" && rfm$MON_CLASS[i] == "medium") rfm$RFM[i] <- "Gold"
+  
+  if(rfm$RF[i] == "One-Timer" && rfm$MON_CLASS[i] == "high") rfm$RFM[i] <- "Copper"
+  if(rfm$RF[i] == "Leaving" && rfm$MON_CLASS[i] == "high") rfm$RFM[i] <- "Bronze"
+  if(rfm$RF[i] == "Engaged" && rfm$MON_CLASS[i] == "high") rfm$RFM[i] <- "Silver"
+  if(rfm$RF[i] == "Leaving Top" && rfm$MON_CLASS[i] == "high") rfm$RFM[i] <- "Gold"
+  if(rfm$RF[i] == "Top" && rfm$MON_CLASS[i] == "high") rfm$RFM[i] <- "Diamond"
+}
+
+```
+
+
+```{r }
+#analisi della distribuzione della variabile rfm appena creata mediante grafico
+
+rfm_data <- as.data.frame(rbind(c("Top", "High", "Diamond", 10984),
+                             c("Top", "Medium", "Gold", 5585),
+                             c("Top", "Low", "Silver", 10306),
+                             c("Leaving Top", "High", "Gold", 5585),
+                             c("Leaving Top", "Medium", "Silver", 10306),
+                             c("Leaving Top", "Low", "Bronze", 25932),
+                             c("Engaged", "High", "Silver", 10306),
+                             c("Engaged", "Medium", "Bronze", 25932),
+                             c("Engaged", "Low", "Copper", 20938),
+                             c("Leaving", "High", "Bronze", 25932),
+                             c("Leaving", "Medium", "Copper", 20938),
+                             c("Leaving", "Low", "Tin", 24967),
+                             c("One Timer", "High", "Copper", 20938),
+                             c("One Timer", "Medium", "Tin", 24967),
+                             c("One Timer", "Low", "Cheap", 14394))) 
+
+colnames(rfm_data) <- c("RF", "Monetary", "Level", "Value")
+rfm_data$RF <- factor(rfm_data$RF,
+                    levels = c("Top", "Leaving Top",
+                               "Engaged", "Leaving", "One Timer"))
+rfm_data$Monetary <- factor(rfm_data$Monetary,
+                          levels = c("Low", "Medium", "High"))
+rfm_data$Value <- as.numeric(rfm_data$Value)
+
+
+ggplot(rfm_data, aes(x = RF, y = Monetary, fill = Value)) + 
+  geom_tile() +
+  geom_text(aes(label = Level)) +
+  scale_fill_distiller(palette = "RdBu") +
+  theme_minimal()+
+  labs(title="TABELLA RFM")
+
+
+rfm_plot <- as.data.frame(table(rfm$RFM))
+
+ggplot(data = rfm_plot,
+       aes(x = Var1, y = Freq,
+           fill = Freq)) +                       
+  geom_bar(stat = "identity") +                  
+  scale_colour_brewer(palette = "Set1") +
+  labs(title = "DISTRIBUZIONE CLASSI RFM",
+       x     = "RFM Classes",
+       y     = "Total Clients") +                
+  theme_minimal() +                               
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_x_discrete(labels = c("Bronze", "Cheap", "Copper", "Diamond",
+                              "Gold", "Silver", "Tin")) + 
+  guides(fill = FALSE)
+```
+
+# Churn
+
+Churn rate misura il tasso di clienti che sono già abbonati per un prodotto o un servizio e disdicono l'abbonamento entro un certo lasso di tempo. 
+
+
+```{r }
+#si seleziona il periodo dal 01/10/2018 al 01/01/2019 come data di riferimento
+churn_periodo_studio <- data7_complete %>%
+                        filter(DIREZIONE == 1,
+                               TIC_DATE < as.Date("1/1/2019",
+                                                  format = "%d/%m/%Y"),
+                               TIC_DATE > as.Date("01/10/2018",
+                                                  format = "%d/%m/%Y"))
+
+knitr::kable(head(churn_periodo_studio))
+```
+
+
+```{r }
+#si seleziona il periodo di holdout: 01/01/2019 - 28/02/2019
+churn_holdout <- data7_complete %>%
+                  filter(DIREZIONE == 1,
+                         TIC_DATE < as.Date("28/02/2019",
+                                            format = "%d/%m/%Y"),
+                         TIC_DATE > as.Date("01/01/2019",
+                                            format = "%d/%m/%Y"))
+
+no_churner <- unique(churn_holdout$ID_CLI)
+
+knitr::kable(head(churn_holdout))
+```
+
+Successivamente, si sceglie la durata del periodo di lookback prima della data di riferimento:
+
+```{r }
+#selezione del periodo di lookback: 3 mesi
+
+churn_recency <- churn_periodo_studio %>%
+                  filter(DIREZIONE == 1) %>%
+                  group_by(ID_CLI) %>%
+                  summarise(LAST_PURCHASE_DATE = max(TIC_DATE))
+
+churn_recency$RECENCY <- difftime(as.Date("01/01/2019",
+                                          format = "%d/%m/%Y"),          
+                                  churn_recency$LAST_PURCHASE_DATE,
+                                  units = "days")
+
+
+churn_frequency <- churn_periodo_studio %>%
+                    filter(DIREZIONE == 1) %>%
+                    group_by(ID_CLI) %>%
+                    summarise(TOT_PURCHASE = n_distinct(ID_SCONTRINO)) %>%
+                    arrange(desc(TOT_PURCHASE))
+
+ 
+churn_monetary <- churn_periodo_studio %>%
+                    filter(DIREZIONE == 1) %>%
+                    group_by(ID_CLI) %>%
+                    summarise(IMPORTO_LORDO = sum(IMPORTO_LORDO),
+                              SCONTO = sum(SCONTO),
+                              SPESA = IMPORTO_LORDO - SCONTO) %>%
+                    ungroup() %>%
+                    as.data.frame() %>%
+                    arrange(desc(IMPORTO_LORDO))
+
+churn <- merge(churn_recency, churn_frequency, by = "ID_CLI") #-- Merge finale
+churn <- merge(churn, churn_monetary, by = "ID_CLI") %>%
+          select(ID_CLI,
+                 RECENCY,
+                 SPESA, 
+                 TOT_PURCHASE)
+
+knitr::kable(head(churn))
+```
+
+
+```{r}
+#creazione della variabile target churn: 1 = churned nel periodo di holdout, 0 = altrimenti. Non si può utilizzare la relazione con la next purchase curve, perchè in data7_complete uno stesso cliente viene riconsiderato nel momento in cui ritorna all'acquisto, mentre in questo caso viene considerato una sola volta.
+churn$CHURN <- 1
+
+for (i in c(1:nrow(churn))){
+  if (churn$ID_CLI[i] %in% no_churner) churn$CHURN[i] <- 0
+}
+
+churn$CHURN <- as.factor(churn$CHURN)
+
+table(churn$CHURN)
+
+
+```
+
+```{r }
+#si selezionano i predittori: RECENCY, SPESA, TOT_PURCHASE, REGION, LAST_COD_FID e TYP_JOB
+churn <- left_join(churn, data2_complete[, c("ID_CLI", "TYP_JOB")], by = "ID_CLI")  
+
+churn <- left_join(churn, data1_complete[, c("ID_CLI", "LAST_COD_FID")], by = "ID_CLI")  
+
+regione <- left_join(data2_complete[, c("ID_CLI", "ID_ADDRESS")],
+                    data3_complete[, c("ID_ADDRESS", "REGION")], by = "ID_ADDRESS") 
+
+churn <- left_join(churn, regione, by = "ID_CLI") 
+churn <- churn[, -8]
+
+knitr::kable(head(churn))
+```
+
+## Modelli
+
+Si utilizzano dei modelli per cercare di prevedere se i clienti saranno o meno dei churn. Si provano 4 modelli: Tree, Random forest, Logistic regression e Lasso
+
+```{r}
+#creazione di train (70%) e test (30%) necessario per addestrare e testare i modelli. Si evidenzia che la variabile target non risulta essere sbilanciata
+churn <- na.omit(churn)
+
+train_p <- createDataPartition(churn$CHURN, 
+                                   p = .70, 
+                                   list = FALSE, 
+                                   times = 1)
+
+
+train <- churn[train_p,]
+test <- churn[-train_p,]
+
+table(train$CHURN)
+```
+
+### Tree
+```{r }
+#Tree, la variabile TOT_PURCHASE è la variabile più significativa
+tree <- rpart(CHURN ~ RECENCY + SPESA + TOT_PURCHASE + REGION + TYP_JOB,
+              data = train)
+
+rpart.plot(tree, extra = "auto")
+
+summary(tree)
+
+printcp(tree) 
+```
+
+### Random forest
+```{r }
+memory.limit(10000000)
+
+tree_rf <- randomForest::randomForest(CHURN ~ RECENCY + SPESA + TOT_PURCHASE +
+                                        REGION + TYP_JOB,
+                                      data = train, ntree = 100)
+print(tree_rf)
+
+```
+
+### Logistic regression
+
+```{r, warning=FALSE }
+#RECENCY e TOT_PURCHASE sono le variabili più significative
+logistic = train(CHURN ~ RECENCY + SPESA + TOT_PURCHASE +
+                  REGION + TYP_JOB,
+                 data = train,
+                 method = "glm")
+
+summary(logistic)
+```
+
+### Lasso
+
+```{r }
+#Lasso
+lasso = train(CHURN ~ RECENCY + SPESA + TOT_PURCHASE +
+                REGION + TYP_JOB,
+            data = train,
+            method = "glmnet",
+            family ="binomial")
+
+lasso
+plot(lasso)
+
+```
+
+Analisi delle prediction per ogni modello
+
+```{r}
+#si valuta accuracy e tutte le matriche di predizione dei modelli che sono stati addestrati
+pred_tree <- predict(tree, test[,-5], type = "class")
+p1 <- unlist(pred_tree)
+confusionMatrix(p1, test$CHURN)
+
+
+pred_rf <- predict(tree_rf, test[,-5], type = "class")
+confusionMatrix(pred_rf, test$CHURN)
+
+
+pred_log <- predict(logistic, test[,-5], type= "raw")
+confusionMatrix(pred_log, test$CHURN)
+
+
+pred_lasso <- predict(lasso, test[,-5], type = "raw")
+confusionMatrix(pred_lasso, test$CHURN)
+```
+
+Calcolo di curve gain e lift per ogni modello
+
+```{r}
+#Calcolo probabilità di curve gain e lift e rappresentazione mediante grafici, tree modello peggiore rispetto ai 4
+prob_tree = predict(tree, test[,-5], "prob")[,1]
+prob_rf = predict(tree_rf, test[,-5], "prob")[,1]
+prob_log = predict(logistic, test[,-5], "prob")[,1]
+prob_lasso = predict(lasso, test[,-5], "prob")[,1]
+
+d_class = as.data.frame(cbind(prob_tree, prob_rf, prob_log, prob_lasso))
+d_class = cbind(d_class, test$CHURN)
+colnames(d_class) <- c("prob_tree", "prob_rf", "prob_log", "prob_lasso", "churn")
+head(d_class)
+
+
+lift_tree = gain_lift(data = d_class, score = 'prob_tree', target = 'churn')
+lift_rf = gain_lift(data = d_class, score = 'prob_rf', target = 'churn')
+lift_log = gain_lift(data = d_class, score = 'prob_log', target = 'churn')
+lift_lasso = gain_lift(data = d_class, score = 'prob_lasso', target = 'churn')
+
+```
+
+## Scoring
+
+Risultati dei modelli su clienti di cui non si conosce ancora se saranno churn o meno
+
+```{r }
+#si applicano tutte i passaggi effettuati in precedenza con la differenza che la data di riferimento sarà il 01/01/2019 ed il periodo di scoring andrà dal 01/03/2019 al 30/04/2019
+churn_periodo_studio_pred <- data7_complete %>%
+                        filter(DIREZIONE == 1,
+                               TIC_DATE < as.Date("30/04/2019",
+                                                  format = "%d/%m/%Y"),
+                               TIC_DATE > as.Date("01/03/2019",
+                                                  format = "%d/%m/%Y"))
+
+
+churn_recency_pred <- churn_periodo_studio_pred %>%
+                  filter(DIREZIONE == 1) %>%
+                  group_by(ID_CLI) %>%
+                  summarise(LAST_PURCHASE_DATE = max(TIC_DATE))
+
+churn_recency_pred$RECENCY <- difftime(as.Date("30/04/2019",
+                                          format = "%d/%m/%Y"),          
+                                  churn_recency_pred$LAST_PURCHASE_DATE,
+                                  units = "days")
+
+
+churn_frequency_pred <- churn_periodo_studio_pred %>%
+                    filter(DIREZIONE == 1) %>%
+                    group_by(ID_CLI) %>%
+                    summarise(TOT_PURCHASE = n_distinct(ID_SCONTRINO)) %>% 
+                    arrange(desc(TOT_PURCHASE))
+
+ 
+churn_monetary_pred <-churn_periodo_studio_pred %>%
+                    filter(DIREZIONE == 1) %>%
+                    group_by(ID_CLI) %>%
+                    summarise(IMPORTO_LORDO = sum(IMPORTO_LORDO),
+                              SCONTO = sum(SCONTO),
+                              SPESA = IMPORTO_LORDO - SCONTO) %>% 
+                    ungroup() %>%
+                    as.data.frame() %>%
+                    arrange(desc(IMPORTO_LORDO))
+
+churn_pred <- merge(churn_recency_pred, churn_frequency_pred, by = "ID_CLI")
+churn_pred <- merge(churn_pred, churn_monetary_pred, by = "ID_CLI") %>%
+          select(ID_CLI,
+                 RECENCY,
+                 SPESA, 
+                 TOT_PURCHASE)  
+
+knitr::kable(head(churn_pred))
+
+churn_pred <- left_join(churn_pred, data2_complete[, c("ID_CLI", "TYP_JOB")], by = "ID_CLI")  
+
+churn_pred <- left_join(churn_pred, data1_complete[, c("ID_CLI", "LAST_COD_FID")], by = "ID_CLI") 
+
+regione <- left_join(data2_complete[, c("ID_CLI", "ID_ADDRESS")],
+                    data3_complete[, c("ID_ADDRESS", "REGION")], by = "ID_ADDRESS") 
+
+churn_pred <- left_join(churn_pred, regione, by = "ID_CLI") 
+churn_pred <- churn_pred[, -7]
+
+knitr::kable(head(churn_pred))
+
+churn_pred <- na.omit(churn_pred)
+
+churn_pred$prob_to_churn <- predict(logistic, churn_pred, type = "prob")[,2]
+ 
+
+knitr::kable(head(churn_pred))
+```
